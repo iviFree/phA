@@ -2,7 +2,14 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
 const COOKIE = "staff_session";
-const PUBLIC_ALLOW = ["/staff-login", "/api/staff-session", "/_next", "/favicon.ico", "/robots.txt", "/sitemap.xml"];
+const PUBLIC_ALLOW = [
+  "/staff-login",
+  "/api/staff-session",
+  "/_next",
+  "/favicon.ico",
+  "/robots.txt",
+  "/sitemap.xml",
+];
 
 async function hmacHex(key: string, msg: string): Promise<string> {
   const enc = new TextEncoder();
@@ -14,9 +21,9 @@ async function hmacHex(key: string, msg: string): Promise<string> {
     ["sign"]
   );
   const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(msg));
-  // a hex
-  const b = new Uint8Array(sig);
-  return Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
+  return Array.from(new Uint8Array(sig))
+    .map((x) => x.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function timingSafeEqualHex(a: string, b: string) {
@@ -39,7 +46,8 @@ export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   if (PUBLIC_ALLOW.some((p) => pathname === p || pathname.startsWith(p))) {
-    return NextResponse.next();
+    const res = NextResponse.next();
+    return applyCSP(res);
   }
 
   const raw = req.cookies.get(COOKIE)?.value;
@@ -57,6 +65,25 @@ export async function middleware(req: NextRequest) {
 
   const res = NextResponse.next();
   res.headers.set("x-staff-session-id", sessionId);
+  return applyCSP(res);
+}
+
+function applyCSP(res: NextResponse) {
+  const nonce = crypto.randomUUID();
+  const csp = [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' blob: https:`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "connect-src 'self' https: wss:",
+    "font-src 'self' data: https:",
+    "frame-src https:",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join("; ");
+
+  res.headers.set("Content-Security-Policy", csp);
+  res.headers.set("x-nonce", nonce);
   return res;
 }
 
