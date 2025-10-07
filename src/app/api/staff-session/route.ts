@@ -4,34 +4,43 @@ import crypto from "crypto";
 
 export const runtime = "nodejs";
 
+type StaffSessionRequest = {
+  code?: string;
+};
+
+type StaffSessionResponse =
+  | { ok: true; sessionId: string }
+  | { ok: false; error: string };
+
 export async function POST(req: Request) {
   try {
-    const { code } = await req.json().catch(() => ({} as any));
-
-    if (!code || typeof code !== "string") {
-      return NextResponse.json(
-        { ok: false, error: "Falta el código." },
-        { status: 400 }
-      );
+    let raw: unknown;
+    try {
+      raw = await req.json();
+    } catch {
+      raw = null;
     }
 
-    // Valida contra una env opcional para evitar 500 mientras pruebas
+    const body = (raw ?? {}) as StaffSessionRequest;
+    const code = typeof body.code === "string" ? body.code.trim() : "";
+
+    if (!code) {
+      const res: StaffSessionResponse = { ok: false, error: "Falta el código." };
+      return NextResponse.json(res, { status: 400 });
+    }
+
     const expected = process.env.STAFF_PIN?.trim();
-    if (expected && code.trim() !== expected) {
-      return NextResponse.json(
-        { ok: false, error: "Código inválido." },
-        { status: 401 }
-      );
+    if (expected && code !== expected) {
+      const res: StaffSessionResponse = { ok: false, error: "Código inválido." };
+      return NextResponse.json(res, { status: 401 });
     }
 
-    // Si no hay STAFF_PIN, aceptamos cualquier código (modo demo)
     const sessionId = crypto.randomUUID();
-    return NextResponse.json({ ok: true, sessionId });
-  } catch (err: any) {
+    const res: StaffSessionResponse = { ok: true, sessionId };
+    return NextResponse.json(res);
+  } catch (err: unknown) {
     console.error("staff-session POST error:", err);
-    return NextResponse.json(
-      { ok: false, error: "server" },
-      { status: 500 }
-    );
+    const res: StaffSessionResponse = { ok: false, error: "server" };
+    return NextResponse.json(res, { status: 500 });
   }
 }
