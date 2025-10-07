@@ -1,3 +1,9 @@
+/* Oculta el logo de Next.js en modo dev */
+:root > #__next-build-watcher,
+:root > .nextjs-portal {
+  display: none !important;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
