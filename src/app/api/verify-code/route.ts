@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { hashCode } from "@/lib/code";
 
+
 export const runtime = "nodejs";
 
 // 1 letra + 3 dígitos en cualquier posición, longitud 4
@@ -60,13 +61,15 @@ export async function POST(req: NextRequest) {
     const codeHash = hashCode(normalized);
     const { data, error } = await supabaseAdmin.rpc("consume_code", { p_code_hash: codeHash });
     const success = Boolean(data) && !error;
-
-    // Auditoría (no bloqueante)
     await supabaseAdmin
-      .from("event_verifications")
-      .insert({ staff_session_id: sessionId, ip, code_hash: codeHash, success })
-      .then(() => null)
-      .catch(() => null);
+      .from("staff_checks")
+      .insert({ staff_session_id: sessionId, ip, code_hash: codeHash, success });
+    if (error) {
+      return NextResponse.json({ valid: false, error: "Error interno" }, { status: 500 });
+    }
+
+return NextResponse.json({ valid: success });
+
 
     if (error) {
       return NextResponse.json({ valid: false, error: "Error interno" }, { status: 500 });
