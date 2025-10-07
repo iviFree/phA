@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
-// Evita edge, y evita intentos de pre-render colectando datos en build
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -22,9 +21,7 @@ export async function POST(req: Request) {
     }
 
     const supabase = getSupabaseAdmin();
-
-    // Ejemplo de lógica (ajústala a tu tabla/campos reales)
-    const codeHash = await hashCode(code); // si usas hash, define esto (o elimina si comparas en texto plano)
+    const codeHash = await hashCode(code);
 
     const { data, error } = await supabase
       .from("staff_codes")
@@ -32,16 +29,14 @@ export async function POST(req: Request) {
       .eq("code_hash", codeHash)
       .maybeSingle();
 
-    // Log no-blocking (no hagas throw si falla)
-    supabase
-      .from("staff_code_attempts")
-      .insert({
+    // Log de intento SIN romper tipos: try/await/catch vacío
+    try {
+      await supabase.from("staff_code_attempts").insert({
         ip: ip ?? null,
         code_hash: codeHash,
         success: !error && !!data?.active,
-      })
-      .then(() => null)
-      .catch(() => null);
+      });
+    } catch {}
 
     if (error) {
       return NextResponse.json(
@@ -58,7 +53,7 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ valid: true });
-  } catch (e) {
+  } catch {
     return NextResponse.json(
       { valid: false, error: "Error del servidor" },
       { status: 500 }
@@ -66,7 +61,6 @@ export async function POST(req: Request) {
   }
 }
 
-/** Si no usas hash, elimina esta función y el uso. */
 async function hashCode(input: string): Promise<string> {
   const enc = new TextEncoder();
   const digest = await crypto.subtle.digest("SHA-256", enc.encode(input));
