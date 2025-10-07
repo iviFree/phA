@@ -1,204 +1,170 @@
 "use client";
-
-import { useEffect, useRef, useState } from "react";
-
-const CODE_REGEX = /^(?:[A-Z]\d{3}|\d[A-Z]\d{2}|\d{2}[A-Z]\d|\d{3}[A-Z])$/;
+import { useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 
 export default function CheckPage() {
+  const router = useRouter();
+
   const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const autoClearTimer = useRef<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [verified, setVerified] = useState(false);
 
-  // Enfocar al cargar
-  useEffect(() => {
-    inputRef.current?.focus();
-    return () => {
-      if (autoClearTimer.current) window.clearTimeout(autoClearTimer.current);
-    };
-  }, []);
-
-  const normalize = (v: string) =>
-    v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
-
-  const onChange = (v: string) => {
-    const n = normalize(v);
-    setCode(n);
-    setMsg(null);
-    setErr(null);
-  };
-
-  const reset = () => {
-    if (autoClearTimer.current) window.clearTimeout(autoClearTimer.current);
-    setCode("");
-    setMsg(null);
-    setErr(null);
-    setBusy(false);
-    inputRef.current?.focus();
-  };
-
-  const submit = async () => {
-    const normalized = normalize(code);
-    if (!CODE_REGEX.test(normalized)) {
-      setErr("Formato inválido (debe ser 1 letra y 3 dígitos)");
+  // 🔹 Función principal para verificar el código
+  const submit = useCallback(async () => {
+    if (code.length !== 4) {
+      setMsg("⚠️ Ingresa un código de 4 caracteres");
       return;
     }
+
     setBusy(true);
-    setErr(null);
     setMsg(null);
+
     try {
       const res = await fetch("/api/verify-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: normalized }),
+        body: JSON.stringify({ code }),
       });
-      const j = await res.json();
-      if (res.status === 429) {
-        setErr(j.error || "Rate limit excedido. Intenta más tarde.");
-      } else if (!res.ok) {
-        setErr(j.error || "Error de verificación");
+
+      const data = await res.json();
+
+      if (data.valid) {
+        setMsg("✅ Código válido — acceso permitido");
+        setVerified(true);
       } else {
-        if (j.valid) {
-          setMsg("Código válido — acceso permitido ✅");
-          // Auto-limpiar para el siguiente escaneo/ingreso
-          autoClearTimer.current = window.setTimeout(() => {
-            reset();
-          }, 1200);
-        } else {
-          setMsg("Código Inválido ❌");
-          inputRef.current?.focus();
-        }
+        setMsg("❌ Inválido o ya usado");
+        setVerified(false);
       }
-    } catch {
-      setErr("Error de red");
+    } catch (error) {
+      console.error(error);
+      setMsg("⚠️ Error al conectar con el servidor");
     } finally {
       setBusy(false);
     }
+  }, [code]);
+
+  // 🔹 Reiniciar campos para nueva verificación
+  const reset = () => {
+    setCode("");
+    setMsg(null);
+    setVerified(false);
   };
 
-  // Atajos de teclado globales (Enter, Esc)
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        if (!busy) submit();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        reset();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [busy, code]);
+  // 🔹 Cerrar sesión de staff
+  const logout = () => {
+    localStorage.removeItem("staff_session");
+    router.push("/staff-login");
+  };
 
   return (
     <main
       style={{
-        minHeight: "100vh",
         display: "grid",
         placeItems: "center",
-        padding: 24,
+        minHeight: "100vh",
+        backgroundColor: "black",
+        color: "white",
+        padding: "24px",
       }}
     >
-      <div style={{ width: 340 }}>
-        <h1 style={{ fontWeight: 600, fontSize: 20, textAlign: "center" }}>
-          Verificación de código
-        </h1>
+      <div style={{ width: "100%", maxWidth: 320, textAlign: "center" }}>
+        <h2 style={{ marginBottom: 20 }}>Verificación de código</h2>
 
         <input
-          ref={inputRef}
           value={code}
-          onChange={(e) => onChange(e.target.value)}
-          inputMode="latin"
+          onChange={(e) =>
+            setCode(e.target.value.replace(/[^a-zA-Z0-9]/g, "").slice(0, 4))
+          }
+          inputMode="numeric"
+          pattern="\d*"
           autoComplete="off"
           autoCorrect="off"
           spellCheck={false}
-          aria-label="Código de acceso (1 letra y 3 dígitos)"
-          maxLength={4}
-          placeholder="A123"
+          placeholder="____"
           style={{
             width: "100%",
+            padding: "14px",
+            fontSize: "32px",
             textAlign: "center",
-            fontSize: 28,
-            letterSpacing: "0.4em",
-            padding: 12,
-            marginTop: 12,
-            border: "1px solid #e5e7eb",
-            borderRadius: 8,
+            borderRadius: "8px",
+            border: "1px solid #333",
+            background: "#1a1a1a",
+            color: "white",
+            letterSpacing: "0.3em",
           }}
         />
 
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          <button
-            onClick={submit}
-            disabled={busy || code.length !== 4}
-            style={{
-              flex: 1,
-              padding: 12,
-              borderRadius: 8,
-              background: "#111",
-              color: "#fff",
-              opacity: busy || code.length !== 4 ? 0.5 : 1,
-            }}
-          >
-            {busy ? "Verificando…" : "Validar (Enter)"}
-          </button>
-
-          <button
-            type="button"
-            onClick={reset}
-            disabled={busy}
-            style={{
-              padding: 12,
-              borderRadius: 8,
-              background: "#e5e7eb",
-              color: "#111",
-              minWidth: 120,
-              opacity: busy ? 0.6 : 1,
-            }}
-            title="Limpia el campo y vuelve a enfocar (Esc)"
-          >
-            Nuevo código
-          </button>
-        </div>
+        <button
+          onClick={submit}
+          disabled={busy}
+          style={{
+            marginTop: "16px",
+            width: "100%",
+            padding: "12px",
+            borderRadius: "8px",
+            border: "none",
+            background: busy ? "#333" : "#ffffff",
+            color: busy ? "#777" : "#000",
+            fontWeight: "bold",
+            cursor: busy ? "not-allowed" : "pointer",
+            transition: "background 0.3s ease",
+          }}
+        >
+          {busy ? "Verificando..." : "Validar"}
+        </button>
 
         {msg && (
-          <p style={{ textAlign: "center", marginTop: 12 }}>{msg}</p>
-        )}
-        {err && (
-          <p style={{ textAlign: "center", marginTop: 8, color: "#e11d48" }}>
-            {err}
+          <p
+            style={{
+              marginTop: "12px",
+              color: verified ? "#4ade80" : "#f87171",
+              fontSize: "14px",
+            }}
+          >
+            {msg}
           </p>
         )}
 
-        <button
-          onClick={async () => {
-            await fetch("/api/staff-session", { method: "DELETE" });
-            location.href = "/staff-login";
-          }}
+        <div
           style={{
-            width: "100%",
-            marginTop: 12,
-            padding: 10,
-            borderRadius: 8,
-            background: "#f3f4f6",
-            color: "#111",
+            display: "flex",
+            gap: "8px",
+            marginTop: "20px",
           }}
         >
-          Salir
-        </button>
+          <button
+            onClick={reset}
+            style={{
+              flex: 1,
+              background: "transparent",
+              border: "1px solid #444",
+              borderRadius: "8px",
+              color: "#ccc",
+              padding: "8px 12px",
+              fontSize: "14px",
+              cursor: "pointer",
+            }}
+          >
+            Nuevo código
+          </button>
 
-        <p
-          style={{
-            textAlign: "center",
-            marginTop: 8,
-            fontSize: 12,
-            color: "#6b7280",
-          }}
-        >
-        </p>
+          <button
+            onClick={logout}
+            style={{
+              flex: 1,
+              background: "transparent",
+              border: "1px solid #f87171",
+              borderRadius: "8px",
+              color: "#f87171",
+              padding: "8px 12px",
+              fontSize: "14px",
+              cursor: "pointer",
+            }}
+          >
+            Salir
+          </button>
+        </div>
       </div>
     </main>
   );

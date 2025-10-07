@@ -1,46 +1,37 @@
-import { NextRequest, NextResponse } from "next/server";
+// src/app/api/staff-session/route.ts
+import { NextResponse } from "next/server";
 import crypto from "crypto";
 
 export const runtime = "nodejs";
-const COOKIE_NAME = "staff_session";
 
-function sign(sessionId: string) {
-  const secret = process.env.STAFF_SESSION_HMAC_SECRET || "";
-  return crypto.createHmac("sha256", secret).update(sessionId).digest("hex");
-}
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const { pin } = await req.json();
-    if (!pin || pin !== process.env.STAFF_PIN) {
-      return NextResponse.json({ ok: false, error: "PIN incorrecto" }, { status: 401 });
+    const { code } = await req.json().catch(() => ({} as any));
+
+    if (!code || typeof code !== "string") {
+      return NextResponse.json(
+        { ok: false, error: "Falta el código." },
+        { status: 400 }
+      );
     }
 
-    const sessionId = crypto.randomBytes(16).toString("hex");
-    const cookieVal = `${sessionId}.${sign(sessionId)}`;
+    // Valida contra una env opcional para evitar 500 mientras pruebas
+    const expected = process.env.STAFF_PIN?.trim();
+    if (expected && code.trim() !== expected) {
+      return NextResponse.json(
+        { ok: false, error: "Código inválido." },
+        { status: 401 }
+      );
+    }
 
-    const res = NextResponse.json({ ok: true });
-    res.cookies.set(COOKIE_NAME, cookieVal, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "strict",
-      path: "/",
-      maxAge: 60 * 60 * 8, // 8h
-    });
-    return res;
-  } catch {
-    return NextResponse.json({ ok: false, error: "Bad request" }, { status: 400 });
+    // Si no hay STAFF_PIN, aceptamos cualquier código (modo demo)
+    const sessionId = crypto.randomUUID();
+    return NextResponse.json({ ok: true, sessionId });
+  } catch (err: any) {
+    console.error("staff-session POST error:", err);
+    return NextResponse.json(
+      { ok: false, error: "server" },
+      { status: 500 }
+    );
   }
-}
-
-export async function DELETE() {
-  const res = NextResponse.json({ ok: true });
-  res.cookies.set(COOKIE_NAME, "", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    path: "/",
-    maxAge: 0,
-  });
-  return res;
 }
