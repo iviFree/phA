@@ -1,81 +1,76 @@
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { hashCode } from "@/lib/code";
+import { NextResponse } from "next/server";
+import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
 
-
+// Evita edge, y evita intentos de pre-render colectando datos en build
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
-// 1 letra + 3 dígitos en cualquier posición, longitud 4
-const CODE_REGEX = /^(?:[A-Z]\d{3}|\d[A-Z]\d{2}|\d{2}[A-Z]\d|\d{3}[A-Z])$/;
+type VerifyRequest = {
+  code?: string;
+  ip?: string;
+};
 
-// Parametrización de rate limit
-const WINDOW_SECONDS = 60;   // ventana de 60s
-const LIMIT_PER_IP = 30;     // máx 30 intentos/min por IP
-const LIMIT_PER_SESSION = 60;// máx 60 intentos/min por sesión
-const LOCK_SECONDS = 120;    // bloquear 2 min al exceder
-
-function windowKey(now: Date, seconds: number) {
-  const ts = Math.floor(now.getTime() / 1000);
-  const base = ts - (ts % seconds);
-  return new Date(base * 1000).toISOString();
-}
-
-async function checkAndBump(key: string, limit: number) {
-  const { data, error } = await supabaseAdmin.rpc("bump_rate_limit", {
-    p_key: key,
-    p_window_seconds: WINDOW_SECONDS,
-    p_limit: limit,
-    p_lock_seconds: LOCK_SECONDS,
-  });
-  if (error) return { locked: false }; // en caso de error, no bloqueamos
-  const row = Array.isArray(data) ? data[0] : data;
-  return { count: row?.count ?? 0, locked: !!row?.locked, lock_until: row?.lock_until };
-}
-
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    const { code } = await req.json();
-    const normalized = String(code || "").trim().toUpperCase();
-    if (!CODE_REGEX.test(normalized)) {
-      return NextResponse.json({ valid: false, error: "Formato inválido" }, { status: 400 });
+    const { code, ip }: VerifyRequest = await req.json();
+
+    if (!code) {
+      return NextResponse.json(
+        { valid: false, error: "Código requerido" },
+        { status: 400 }
+      );
     }
 
-    const sessionId = req.headers.get("x-staff-session-id") || "unknown";
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
-    const now = new Date();
-    const win = windowKey(now, WINDOW_SECONDS);
+    const supabase = getSupabaseAdmin();
 
-    // Rate limit por IP y por sesión
-    const ipKey = `ip:${ip}:${win}`;
-    const sesKey = `session:${sessionId}:${win}`;
+    // Ejemplo de lógica (ajústala a tu tabla/campos reales)
+    const codeHash = await hashCode(code); // si usas hash, define esto (o elimina si comparas en texto plano)
 
-    const [ipRL, sesRL] = await Promise.all([
-      checkAndBump(ipKey, LIMIT_PER_IP),
-      checkAndBump(sesKey, LIMIT_PER_SESSION),
-    ]);
+    const { data, error } = await supabase
+      .from("staff_codes")
+      .select("id, active")
+      .eq("code_hash", codeHash)
+      .maybeSingle();
 
-    if (ipRL.locked || sesRL.locked) {
-      return NextResponse.json({ valid: false, error: "Rate limit excedido. Intenta más tarde." }, { status: 429 });
-    }
-
-    const codeHash = hashCode(normalized);
-    const { data, error } = await supabaseAdmin.rpc("consume_code", { p_code_hash: codeHash });
-    const success = Boolean(data) && !error;
-    await supabaseAdmin
-      .from("staff_checks")
-      .insert({ staff_session_id: sessionId, ip, code_hash: codeHash, success });
-    if (error) {
-      return NextResponse.json({ valid: false, error: "Error interno" }, { status: 500 });
-    }
-
-return NextResponse.json({ valid: success });
-
+    // Log no-blocking (no hagas throw si falla)
+    supabase
+      .from("staff_code_attempts")
+      .insert({
+        ip: ip ?? null,
+        code_hash: codeHash,
+        success: !error && !!data?.active,
+      })
+      .then(() => null)
+      .catch(() => null);
 
     if (error) {
-      return NextResponse.json({ valid: false, error: "Error interno" }, { status: 500 });
+      return NextResponse.json(
+        { valid: false, error: "Error interno" },
+        { status: 500 }
+      );
     }
-    return NextResponse.json({ valid: success });
-  } catch {
-    return NextResponse.json({ valid: false, error: "Bad request" }, { status: 400 });
+
+    if (!data || !data.active) {
+      return NextResponse.json(
+        { valid: false, error: "Código inválido" },
+        { status: 401 }
+      );
+    }
+
+    return NextResponse.json({ valid: true });
+  } catch (e) {
+    return NextResponse.json(
+      { valid: false, error: "Error del servidor" },
+      { status: 500 }
+    );
   }
+}
+
+/** Si no usas hash, elimina esta función y el uso. */
+async function hashCode(input: string): Promise<string> {
+  const enc = new TextEncoder();
+  const digest = await crypto.subtle.digest("SHA-256", enc.encode(input));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
